@@ -1,6 +1,7 @@
 const express = require("express");
 const app = express();
-var cors = require("cors");
+const cors = require("cors");
+const jwt = require("jsonwebtoken");
 const port = process.env.PORT || 5000;
 require("dotenv").config();
 
@@ -33,6 +34,42 @@ async function run() {
       .db("Bistro_Boss")
       .collection("usersInfo");
 
+    // jwt user access token
+    app.post("/api/v1/user/authToken", async (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(user, process.env.Access_Token, {
+        expiresIn: "1hr",
+      });
+      res.send({ token });
+    });
+
+    // middlewares
+    const verifyToken = (req, res, next) => {
+      if (!req.headers.authorization) {
+        return res.status(401).send({ message: "unAuthorized" });
+      }
+      // verify token
+      const token = req.headers.authorization.split(" ")[1];
+      jwt.verify(token, process.env.Access_Token, (err, decoded) => {
+        if (err) {
+          return res.status(401).send({ message: "unAuthorized" });
+        }
+        req.decoded = decoded;
+        next();
+      });
+    };
+    // verify admin
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded.email;
+      const query = { email: email };
+      const user = await usersInfoCollection.findOne(query);
+      const isAdmin = user.role === "admin";
+      if (!isAdmin) {
+        return res.status(403).send({ message: "forbidden" });
+      }
+      next();
+    };
+
     // user related api
 
     // store user data
@@ -49,31 +86,68 @@ async function run() {
     });
 
     // get user data
-    app.get("/api/v1/user/userInfo", async (req, res) => {
-      const result = await usersInfoCollection.find().toArray();
-      res.send(result);
-    });
+    app.get(
+      "/api/v1/user/userInfo",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const result = await usersInfoCollection.find().toArray();
+        res.send(result);
+      }
+    );
+
+    // admin check
+    app.get(
+      "/api/v1/admin/:email",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const email = req.params.email;
+        if (!email === req.decoded.email) {
+          return res.status(403).send({ message: "forbidden" });
+        }
+
+        const query = { email: email };
+        const user = await usersInfoCollection.findOne(query);
+        let admin = false;
+        if (user) {
+          admin = user?.role === "admin";
+        }
+
+        res.send({ admin });
+      }
+    );
 
     // delete user by admin
-    app.delete("/api/v1/admin/removeUser/:id", async (req, res) => {
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await usersInfoCollection.deleteOne(query);
-      res.send(result);
-    });
+    app.delete(
+      "/api/v1/admin/removeUser/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await usersInfoCollection.deleteOne(query);
+        res.send(result);
+      }
+    );
 
     // make admin
-    app.patch("/api/v1/makeAdmin/:id", async (req, res) => {
-      const id = req.params.id;
-      const filter = { _id: new ObjectId(id) };
-      const updateRole = {
-        $set: {
-          role: "admin",
-        },
-      };
-      const result = await usersInfoCollection.updateOne(filter, updateRole);
-      res.send(result);
-    });
+    app.patch(
+      "/api/v1/makeAdmin/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const filter = { _id: new ObjectId(id) };
+        const updateRole = {
+          $set: {
+            role: "admin",
+          },
+        };
+        const result = await usersInfoCollection.updateOne(filter, updateRole);
+        res.send(result);
+      }
+    );
 
     // menu related api
 
